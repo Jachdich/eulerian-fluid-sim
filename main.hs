@@ -4,7 +4,7 @@ import System.IO.Unsafe
 import Data.Array.IO
 
 type Cell = (Float, Int, Int)
-type FlowVec = IO (IOArray Int Int)
+type FlowVec = IO (IOArray Int Float)
 type Model = ([Cell], FlowVec, FlowVec)
 
 horizontals :: Model -> FlowVec
@@ -25,10 +25,10 @@ withHoriz (cells, _, vert) horiz = (cells, horiz, vert)
 withVert :: Model -> FlowVec -> Model
 withVert (cells, horiz, _) vert = (cells, horiz, vert)
 
--- uAt :: Model -> Int -> Int -> Float
--- uAt model x y = (horizontals model) !! (y * xCells + x)
--- vAt :: Model -> Int -> Int -> Float
--- vAt model x y = (verticals model) !! (y * xCells + x)
+uAt :: Model -> Int -> Int -> IO Float
+uAt model x y = readArray (horizontals model) (y * xCells + x)
+vAt :: Model -> Int -> Int -> IO Float
+vAt model x y = readArray (verticals model) (y * xCells + x)
 
 width = 1280
 height = 720
@@ -44,8 +44,8 @@ yCells = height `div` cellHeight
 
 initial :: Model
 initial = ([(0.0, x, y) | x <- [1..(xCells)], y <- [1..(yCells)]],
-           newArray (1,10) 37,
-           newArray (1,10) 37)
+           newArray (0,(xCells * (yCells + 1))) 0.0,
+           newArray (0,((xCells + 1) * yCells)) 0.0)
 
 main :: IO()
 main = simulate (InWindow "Window" window (0, 0)) black 30 initial draw update
@@ -62,7 +62,7 @@ draw model = Pictures [color (makeColor col col col 1.0) $ pos x y $ rectangleSo
 
 update vp dt model = initial
 
--- integration dt model = model `withCells` [(value + g * dt, x, y) | (value, x, y) <- cells model]
+integration dt model = model `withCells` [(value + g * dt, x, y) | (value, x, y) <- cells model]
 -- divergence dt model = [
 --                         (uAt model x y) + (divergence x y) / 4
 --                         (uAt model (x+1) y) - (divergence x y) / 4
