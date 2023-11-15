@@ -25,8 +25,8 @@ width = 1280
 height = 720
 cellWidth :: Int
 cellHeight :: Int
-cellWidth = 1
-cellHeight = 1
+cellWidth = 10
+cellHeight = 10
 
 g = -9.81 -- downwards
 
@@ -102,7 +102,11 @@ update dt model = do
         -- putStrLn (show dt)
         return model --divergence dt model
 
--- integration dt model = model `withCells` [(Cell (value + g * dt) x y wall pressure) | (Cell value x y wall pressure) <- cells model]
+
+integrate model = do
+    forM_ [0..xCells-1] $ \x -> do
+        forM_ [0..yCells-1] $ \y -> do
+            uSet model  whatever HELAGIJEGHI
 
 divergence :: Float -> Model -> IO Model
 divergence dt model = do 
@@ -113,7 +117,11 @@ divergence dt model = do
                         ux1y <- uAt model (x + 1) y
                         vxy1 <- vAt model x (y + 1)
                         let diverge = (uxy + vxy - ux1y - vxy1) / 4 * 1.9 -- 1.9 is over relaxation constant
-                        let s = sum $ map fromEnum [isWall (x - 1) y, isWall x (y - 1), isWall (x + 1) y, isWall x (y + 1)]
+                        w1 <- isWall (x - 1) y
+                        w2 <- isWall x (y - 1)
+                        w3 <- isWall (x + 1) y
+                        w4 <- isWall x (y + 1)
+                        let s = sum $ map fromEnum [w1, w2, w3, w4]
                         uSet model x   y     (uxy  + diverge)
                         uSet model (x+1) y   (ux1y - diverge)
                         vSet model x   y     (vxy  - diverge)
@@ -122,4 +130,6 @@ divergence dt model = do
                         return ()
                 return model
             where
-                isWall x y = False -- wall (cells model !! (y * xCells + x))
+                isWall x y = do
+                    (Cell _ wall _) <- readArray (cells model) (y * xCells + x)
+                    return wall
