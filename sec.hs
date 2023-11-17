@@ -5,21 +5,18 @@ import Data.IORef
 import qualified Graphics.Rendering.OpenGL as GL
 import Graphics.UI.GLUT 
 import Codec.Picture
-import Control.Monad (forM_, forM)
+import Control.Monad (forM_, forM, replicateM_)
 
-data Cell = Cell {density :: Float, wall :: Bool, pressure :: Float}
-type FlowVec = (IOArray Int Float)
-data Model = Model {cells :: IOArray Int Cell, horiz :: FlowVec, vert :: FlowVec}
+data Model = Model {wall :: IOArray Int Float, horiz :: IOArray Int Float, vert :: IOArray Int Float, pressure :: IOArray Int Float}
 
-uAt :: Model -> Int -> Int -> IO Float
-uAt model x y = readArray (horiz model) (y * xCells + x)
-vAt :: Model -> Int -> Int -> IO Float
-vAt model x y = readArray (vert model) (y * xCells + x)
-
-uSet :: Model -> Int -> Int -> Float -> IO ()
-uSet model x y = writeArray (horiz model) (y * xCells + x)
-vSet :: Model -> Int -> Int -> Float -> IO ()
-vSet model x y = writeArray (vert model) (y * xCells + x)
+at :: IOArray Int Float -> Int -> Int -> IO Float
+at vec x y = readArray vec (x * yCells + y)
+set :: IOArray Int Float -> Int -> Int -> Float -> IO ()
+set vec x y = writeArray vec (x * yCells + y)
+add :: IOArray Int Float -> Int -> Int -> Float -> IO ()
+add vec x y val = do
+    oldval <- at vec x y
+    set vec x y (oldval + val)
 
 width = 1280
 height = 720
@@ -27,10 +24,10 @@ cellWidth :: Int
 cellHeight :: Int
 cellWidth = 10
 cellHeight = 10
-cellSpacing = (fromIntegral cellWidth) * 0.01 -- assume 1 pixel = 0.01m
+cellSpacing = 0.01
 
 g = -9.81 -- downwards
-dt = 1.0/30.0
+dt = 1.0/120.0
 fluidDensity = 1000.0 -- water ig
 
 xCells = width `div` cellWidth
@@ -40,14 +37,14 @@ initial :: IO Model
 initial = do
         horiz <- newArray (0,(xCells * (yCells + 1))) 0.0
         vert <- newArray (0,((xCells + 1) * yCells)) 0.0
-        cells <- newArray (0,(xCells * yCells)) (Cell 1.0 False 0.0)
+        wall <- newArray (0,(xCells * yCells)) 0.0
+        pressure <- newArray (0,(xCells * yCells)) 0.0
         forM_ [0..xCells-1] $ \x -> do
             forM_ [0..yCells-1] $ \y -> do
-                writeArray cells (y * xCells + x) (Cell 1.0 (isWall x y) 0.0)
-        return (Model cells horiz vert)
-        -- return ([(Cell 1.0 x y (isWall x y) 0.0) | x <- [0..(xCells-1)], y <- [0..(yCells-1)]], horiz, vert)
+                set wall x y (isWall x y)
+        return (Model wall horiz vert pressure)
     where
-        isWall x y = x == 0 || y == 0 || x == xCells - 1 || y == yCells - 1
+        isWall x y = if (x == 0 || y == 0 || x == xCells - 1 || y == yCells - 1) then 0.0 else 1.0
 
 main :: IO ()
 main = do
@@ -61,11 +58,6 @@ main = do
     idleCallback $= Just (idle state)
     mainLoop
 
--- pos :: Int -> Int -> Picture -> Picture
--- pos x y = translate ((fromIntegral x * fromIntegral cellWidth) - (fromIntegral width / 2)) (fromIntegral (y * cellHeight) - (fromIntegral height / 2))
--- rectangleSolidCorner width height = translate (width / 2) (height / 2) $ rectangleSolid width height
-
-
 draw :: IORef Model -> DisplayCallback
 draw state = do 
     clear [ColorBuffer]
@@ -75,20 +67,27 @@ draw state = do 
 
 idle :: IORef Model -> IdleCallback
 idle state = do
-  -- state $~! (+ 1)
+  model <- get state
   postRedisplay Nothing
 
+map_lol :: Float -> Float -> Float -> Float -> Float -> Float
+map_lol a mi ma mi_ ma_ = (a - mi) / (ma - mi) * (ma_ - mi_) + mi_
 
 drawModel :: Model -> IO ()
 drawModel model = renderPrimitive Quads $ do
-            putStrLn "he"
             update model
+            pressures <- getElems (pressure model)
+            let minPressure = minimum pressures
+            let maxPressure = maximum pressures
             forM_ [0..(xCells*yCells)-1] $ \i -> do
-                cell <- readArray (cells model) i
                 let x = i `mod` xCells
                 let y = i `div` xCells
-                color $ Color3 (pressure cell) (pressure cell) (if wall cell then 1.0 else 0.0)
-                print $ pressure cell
+                pressure <- at (pressure model) x y
+                wall <- at (wall model) x y
+                let p = map_lol pressure minPressure maxPressure 0.0 1.0
+                color $ Color3 p p (1.0 - wall)
+                v <- readArray (vert model) i
+                print v
                 let screenX = (fromIntegral x / fromIntegral xCells * 2 - 1) :: GLfloat
                 let screenY = (fromIntegral y / fromIntegral yCells * 2 - 1) :: GLfloat
                 -- print screenX
@@ -104,52 +103,47 @@ drawModel model = renderPrimitive Quads $ do
 
 update :: Model -> IO Model
 update model = do 
-        -- integrate model
-        mapArray (\(Cell a b pressure) -> Cell a b 0) (cells model)
-        model <- divergence model
+        integrate model
+        forM_ [0..xCells * yCells - 1] $ \i -> do
+            writeArray (pressure model) i 0
+        divergence model
         return model
 
-
-integrate model = do
+integrate :: Model -> IO ()
+integrate Model {wall, horiz, vert, pressure} = do
     forM_ [1..xCells-1] $ \x -> do
-        forM_ [1..yCells-1] $ \y -> do
-            (Cell _ wall _) <- readArray (cells model) (y * xCells + x)
-            (Cell _ wall1 _) <- readArray (cells model) (y * xCells + x - 1)
-            v <- vAt model x y
-            if not wall && not wall1 then
-                vSet model x y (v + g * dt)
+        forM_ [1..yCells-2] $ \y -> do
+            wall0 <- at wall x y
+            wall1 <- at wall x (y - 1)
+            if wall0 /= 0.0 && wall1 /= 0.0 then
+                add vert x y (g * dt)
             else return ()
 
-divergence :: Model -> IO Model
-divergence model = do
-                let coefficientPressure = fluidDensity * cellSpacing / dt
-                forM_ [1..xCells-2] $ \x -> do
-                    forM_ [1..yCells-2] $ \y -> do
-                        w1 <- isWall (x - 1) y
-                        w2 <- isWall x (y - 1)
-                        w3 <- isWall (x + 1) y
-                        w4 <- isWall x (y + 1)
-                        let s = sum $ map fromEnum $ map not [w1, w2, w3, w4]
-                        uxy <- uAt model x y
-                        vxy <- vAt model x y
-                        ux1y <- uAt model (x + 1) y
-                        vxy1 <- vAt model x (y + 1)
-                        let diverge = (uxy + vxy - ux1y - vxy1) / 4
-                        cell <- readArray (cells model) (y * xCells + x)
-                        let p = -diverge / (fromIntegral s)-- * 1.9; -- maybe -diverge
-                        let pressureHere = (pressure cell) + p * coefficientPressure
-                        uSet model x   y     (uxy  - (p * fromIntegral $ fromEnum $ not w1))
-                        uSet model (x+1) y   (ux1y + (p * fromIntegral $ fromEnum $ not w3))
-                        vSet model x   y     (vxy  - (p * fromIntegral $ fromEnum $ not w2))
-                        vSet model x   (y+1) (vxy1 + (p * fromIntegral $ fromEnum $ not w4))
-                        writeArray (cells model) (y * xCells + x) (Cell (density cell) (wall cell) pressureHere)
-                        return ()
-                return model
-            where
-                isWall x y = do
-                    (Cell _ wall _) <- readArray (cells model) (y * xCells + x)
-                    return wall
+divergence :: Model -> IO ()
+divergence Model {wall, horiz, vert, pressure} = 
+    -- replicateM_ 10 $
+    forM_ [1..xCells-2] $ \x -> do
+        forM_ [1..yCells-2] $ \y -> do
+            x0 <- at wall (x - 1) y
+            x1 <- at wall (x + 1) y
+            y0 <- at wall x (y - 1)
+            y1 <- at wall x (y + 1)
+            let s = x0 + x1 + y0 + y1
+            uxy <-  at horiz x y
+            vxy <-  at vert  x y
+            ux1y <- at horiz (x + 1) y
+            vxy1 <- at vert  x (y + 1)
+            let diverge = (ux1y - uxy + vxy1 - vxy)
+            let p = -diverge / s * 1.9
+            add pressure x y (p * coefficientPressure)
+            add horiz  x     y    (- (p * x0))
+            add horiz (x+1)  y    (  (p * x1))
+            add vert   x     y    (- (p * y0))
+            add vert   x    (y+1) (  (p * y1))
+            return ()
 
+    where
+        coefficientPressure = fluidDensity * cellSpacing / dt
 -- advection :: Model -> IO Model
 -- advection model = forM_ [1..xCells-2] $ \x -> do
 --                       forM_ [1..yCells-2] $ \y -> do
