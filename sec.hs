@@ -12,7 +12,9 @@ data Model = Model {wall :: IOArray Int Float,
                     vert :: IOArray Int Float,
                     pressure :: IOArray Int Float,
                     newHoriz :: IOArray Int Float,
-                    newVert :: IOArray Int Float}
+                    newVert :: IOArray Int Float,
+                    smoke :: IOArray Int Float,
+                    newSmoke :: IOArray Int Float}
 
 at :: IOArray Int Float -> Int -> Int -> IO Float
 at vec x y = readArray vec (x * yCells + y)
@@ -46,12 +48,14 @@ initial = do
         newVert <- newArray (0,((xCells + 1) * yCells)) 0.0
         wall <- newArray (0,(xCells * yCells)) 0.0
         pressure <- newArray (0,(xCells * yCells)) 0.0
+        smoke <- newArray (0,(xCells * yCells)) 1.0
+        newSmoke <- newArray (0,(xCells * yCells)) 1.0
         forM_ [0..xCells-1] $ \x -> do
             forM_ [0..yCells-1] $ \y -> do
                 set wall x y (isWall x y)
-        return (Model wall horiz vert pressure newHoriz newVert)
+        return (Model wall horiz vert pressure newHoriz newVert smoke newSmoke)
     where
-        isWall x y = if (x == 0 || y == 0 || x == xCells - 1 || y == yCells - 1) then 0.0 else 1.0
+        isWall x y = if (x == 0 || y == 0 || y == yCells - 1) then 0.0 else 1.0
 
 main :: IO ()
 main = do
@@ -66,8 +70,28 @@ main = do
     motionCallback $= Just (mouse state)
     mainLoop
 
-mouse state event = do
-    print event
+-- mouse :: IORef Model -> Position -> IO ()
+mouse state (Position x y) = do
+    Model {wall, horiz, vert, pressure, newHoriz, newVert, smoke, newSmoke} <- get state
+    let normX = (fromIntegral x) / (fromIntegral xCells) * cellSpacing
+    let normY = (fromIntegral y) / (fromIntegral yCells) * cellSpacing
+    let vx = 0.0
+    let vy = 0.0
+    forM_ [1..xCells - 3] $ \i ->
+        forM_ [1..yCells - 3] $ \j -> do
+            let dx = ((fromIntegral i) + 0.5) * (fromIntegral cellWidth) - fromIntegral x
+            let dy = ((fromIntegral j) + 0.5) * (fromIntegral cellWidth) - fromIntegral (height - fromIntegral y)
+            let r = (fromIntegral cellWidth) * 10
+            if dx * dx + dy * dy < r * r then do
+                set horiz i j vx
+                set horiz (i + 1) j vx
+                set vert i j vy
+                set vert i (j + 1) vy
+                set wall i j 0.0
+            else
+                set wall i j 1.0
+
+    -- print (normX, normY)
 
 draw :: IORef Model -> DisplayCallback
 draw state = do 
@@ -87,9 +111,10 @@ map_lol a mi ma mi_ ma_ = (a - mi) / (ma - mi) * (ma_ - mi_) + mi_
 drawModel :: Model -> IO ()
 drawModel model = renderPrimitive Quads $ do
             update model
-            pressures <- getElems (pressure model)
+            pressures <- getElems (smoke model)
             let minPressure = minimum pressures
             let maxPressure = maximum pressures
+            print (minPressure, maxPressure)
             forM_ [0..(xCells*yCells)-1] $ \i -> do
                 let x = i `mod` xCells
                 let y = i `div` xCells
@@ -110,17 +135,21 @@ drawModel model = renderPrimitive Quads $ do
                 vertex $ Vertex2 screenX (screenY + dy)
 
 update :: Model -> IO Model
-update model = do 
-        integrate model
+update model = do
+        forM_ [0..yCells - 1] $ \y -> do
+            set (horiz model) 1 y 2.0
+        set (smoke model) 1 ((yCells `div` 2)) 0.0
+        -- integrate model
         forM_ [0..xCells * yCells - 1] $ \i -> do
             writeArray (pressure model) i 0
         divergence model
 
         extrapolate model -- ???
         advection model
+        smokeAdvection model
         return model
 
-extrapolate Model {wall, horiz, vert, pressure, newHoriz, newVert} = do
+extrapolate Model {wall, horiz, vert, pressure, newHoriz, newVert, smoke, newSmoke} = do
     forM_ [0..xCells - 1] $ \x -> do
         u1 <- at horiz x 1
         set horiz x 0 u1
@@ -133,7 +162,7 @@ extrapolate Model {wall, horiz, vert, pressure, newHoriz, newVert} = do
         set vert (xCells - 1) y v2
 
 integrate :: Model -> IO ()
-integrate Model {wall, horiz, vert, pressure, newHoriz, newVert} = do
+integrate Model {wall, horiz, vert, pressure, newHoriz, newVert, smoke, newSmoke} = do
     forM_ [1..xCells-1] $ \x -> do
         forM_ [1..yCells-2] $ \y -> do
             wall0 <- at wall x y
@@ -143,8 +172,8 @@ integrate Model {wall, horiz, vert, pressure, newHoriz, newVert} = do
             else return ()
 
 divergence :: Model -> IO ()
-divergence Model {wall, horiz, vert, pressure, newHoriz, newVert} = 
-    replicateM_ 10 $
+divergence Model {wall, horiz, vert, pressure, newHoriz, newVert, smoke, newSmoke} = 
+    replicateM_ 50 $
     forM_ [1..xCells-2] $ \x -> do
         forM_ [1..yCells-2] $ \y -> do
             x0 <- at wall (x - 1) y
@@ -152,18 +181,20 @@ divergence Model {wall, horiz, vert, pressure, newHoriz, newVert} =
             y0 <- at wall x (y - 1)
             y1 <- at wall x (y + 1)
             let s = x0 + x1 + y0 + y1
-            uxy <-  at horiz x y
-            vxy <-  at vert  x y
-            ux1y <- at horiz (x + 1) y
-            vxy1 <- at vert  x (y + 1)
-            let diverge = (ux1y - uxy + vxy1 - vxy)
-            let p = -diverge / s * 1.9
-            add pressure x y (p * coefficientPressure)
-            add horiz  x     y    (- (p * x0))
-            add horiz (x+1)  y    (  (p * x1))
-            add vert   x     y    (- (p * y0))
-            add vert   x    (y+1) (  (p * y1))
-            return ()
+            if s == 0 then do
+                return ()
+            else do
+                uxy <-  at horiz x y
+                vxy <-  at vert  x y
+                ux1y <- at horiz (x + 1) y
+                vxy1 <- at vert  x (y + 1)
+                let diverge = (ux1y - uxy + vxy1 - vxy)
+                let p = -diverge / s * 1.9
+                add pressure x y (p * coefficientPressure)
+                add horiz  x     y    (- (p * x0))
+                add horiz (x+1)  y    (  (p * x1))
+                add vert   x     y    (- (p * y0))
+                add vert   x    (y+1) (  (p * y1))
 
     where
         coefficientPressure = fluidDensity * cellSpacing / dt
@@ -178,14 +209,13 @@ clamp :: Ord a => a -> a -> a -> a
 clamp a lower upper = if a > upper then upper else (if a < lower then lower else a)
 
 advection :: Model -> IO ()
-advection Model {wall, horiz, vert, pressure, newHoriz, newVert} = do
+advection Model {wall, horiz, vert, pressure, newHoriz, newVert, smoke, newSmoke} = do
     
     forM_ [1..xCells-1] $ \x -> do
         forM_ [1..yCells-1] $ \y -> do
             sxy  <- at wall x y
             sx1y <- at wall (x - 1) y
             sxy1 <- at wall x (y - 1)
-            
             if sxy /= 0.0 && sx1y /= 0.0 && y < yCells - 1 then do
                 let currentPos = ((fromIntegral x) * cellSpacing,
                                 (fromIntegral y) * cellSpacing + (cellSpacing / 2))
@@ -200,6 +230,7 @@ advection Model {wall, horiz, vert, pressure, newHoriz, newVert} = do
                                 (fromIntegral y) * cellSpacing)
                 currentVelocity <- velocityAtV x y
                 let previousPos = currentPos `vsub` (currentVelocity `vmul` dt)
+
                 v <- uncurry (sample vert (cellSpacing / 2) 0.0) previousPos
                 set newVert x y v
             else return ()
@@ -216,6 +247,7 @@ advection Model {wall, horiz, vert, pressure, newHoriz, newVert} = do
             v11 <- at vert x (y-1)
             v00 <- at vert (x+1) y
             v10 <- at vert x y
+            -- print (v01, v11, v00, v10)
             let v = (v01 + v11 + v00 + v10) / 4
             return (u, v)
         velocityAtV x y = do
@@ -227,35 +259,57 @@ advection Model {wall, horiz, vert, pressure, newHoriz, newVert} = do
             let u = (u0 + u1 + u2 + u3) / 4
             return (u, v)
 
-        sample field dx dy ix iy = do
-            -- make sure the x and y values arent whack
-            let x = clamp ix cellSpacing ((fromIntegral xCells - 1) * cellSpacing)
-            let y = clamp iy cellSpacing ((fromIntegral yCells - 1) * cellSpacing)
-            
-            -- which cell is the given coordinate inside?
-            let gridX = floor ((x - dx) / cellSpacing)
-            let gridY = floor ((y - dy) / cellSpacing)
+sample :: IOArray Int Float -> Float -> Float -> Float -> Float -> IO Float
+sample field dx dy ix iy = do
+    -- make sure the x and y values arent whack
+    let x = clamp ix cellSpacing ((fromIntegral xCells - 1) * cellSpacing)
+    let y = clamp iy cellSpacing ((fromIntegral yCells - 1) * cellSpacing)
+    
+    -- which cell is the given coordinate inside?
+    let gridX = floor ((x - dx) / cellSpacing)
+    let gridY = floor ((y - dy) / cellSpacing)
 
-            -- Offsets of the position into the current cell
-            let offsetX = (x - dx) / cellSpacing - (fromIntegral gridX)
-            let offsetY = (y - dy) / cellSpacing - (fromIntegral gridY)
+    -- Offsets of the position into the current cell
+    let offsetX = (x - dx) / cellSpacing - (fromIntegral gridX)
+    let offsetY = (y - dy) / cellSpacing - (fromIntegral gridY)
 
-            -- Weights of each velocity component
-            let w00 = 1 - offsetX
-            let w01 = offsetX
-            let w10 = 1 - offsetY
-            let w11 = offsetY
+    -- Weights of each velocity component
+    let w00 = 1 - offsetX
+    let w01 = offsetX
+    let w10 = 1 - offsetY
+    let w11 = offsetY
 
-            -- sample each velocity component
-            vx0y0 <- at field gridX gridY
-            vx1y0 <- at field (gridX + 1) gridY
-            vx0y1 <- at field gridX (gridY + 1)
-            vx1y1 <- at field (gridX + 1) (gridY + 1)
+    -- sample each velocity component
+    vx0y0 <- at field gridX gridY
+    vx1y0 <- at field (gridX + 1) gridY
+    vx0y1 <- at field gridX (gridY + 1)
+    vx1y1 <- at field (gridX + 1) (gridY + 1)
+    -- final weighted sum
+    return ( 
+        w00 * w10 * vx0y0 +
+        w01 * w10 * vx1y0 +
+        w00 * w11 * vx0y1 +
+        w01 * w11 * vx1y1)
 
-            -- final weighted sum
-            return ( 
-                w00 * w10 * vx0y0 +
-                w01 * w10 * vx1y0 +
-                w00 * w11 * vx0y1 +
-                w01 * w11 * vx1y1)
+smokeAdvection :: Model -> IO ()
+smokeAdvection Model {wall, horiz, vert, pressure, newHoriz, newVert, smoke, newSmoke} = do
+    forM_ [1..xCells-1] $ \x -> do
+        forM_ [1..yCells-1] $ \y -> do
+            sxy  <- at wall x y
+            if sxy /= 0.0 then do
+                u0 <- at horiz x y
+                u1 <- at horiz (x+1) y
+                v0 <- at vert x y
+                v1 <- at vert x (y+1)
+                let currentVelocity = ((u0 + u1) / 2.0, (v0 + v1) / 2.0)
+                let currentPos = ((fromIntegral x) * cellSpacing + cellSpacing / 2.0,
+                                  (fromIntegral y) * cellSpacing + cellSpacing / 2.0)
+                let previousPos = currentPos `vsub` (currentVelocity `vmul` dt)
+                s <- (uncurry (sample smoke (cellSpacing / 2) (cellSpacing / 2))) previousPos
+                set newSmoke x y s
+            else return ()
 
+    forM_ [0..xCells * yCells - 1] $ \i -> do
+        s <- readArray newSmoke i
+        writeArray smoke i s
+    
