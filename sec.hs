@@ -1,40 +1,40 @@
-import System.Random
-import System.IO.Unsafe
 import Data.Array.IO
 import Data.IORef
 import qualified Graphics.Rendering.OpenGL as GL
-import Graphics.UI.GLUT 
+import Graphics.UI.GLUT
 import Codec.Picture
+-- import Data.Color
 import Control.Monad (forM_, forM, replicateM_)
+import GHC.Utils.Misc (uncurry3)
 
-data Model = Model {wall :: IOArray Int Float,
-                    horiz :: IOArray Int Float,
-                    vert :: IOArray Int Float,
-                    pressure :: IOArray Int Float,
-                    newHoriz :: IOArray Int Float,
-                    newVert :: IOArray Int Float,
-                    smoke :: IOArray Int Float,
-                    newSmoke :: IOArray Int Float}
+data Model = Model {wall :: IOUArray Int Float,
+                    horiz :: IOUArray Int Float,
+                    vert :: IOUArray Int Float,
+                    pressure :: IOUArray Int Float,
+                    newHoriz :: IOUArray Int Float,
+                    newVert :: IOUArray Int Float,
+                    smoke :: IOUArray Int Float,
+                    newSmoke :: IOUArray Int Float}
 
-at :: IOArray Int Float -> Int -> Int -> IO Float
-at vec x y = readArray vec (x * yCells + y)
-set :: IOArray Int Float -> Int -> Int -> Float -> IO ()
-set vec x y = writeArray vec (x * yCells + y)
-add :: IOArray Int Float -> Int -> Int -> Float -> IO ()
+at :: IOUArray Int Float -> Int -> Int -> IO Float
+at vec x y = readArray vec (y * xCells + x)
+set :: IOUArray Int Float -> Int -> Int -> Float -> IO ()
+set vec x y = writeArray vec (y * xCells + x)
+add :: IOUArray Int Float -> Int -> Int -> Float -> IO ()
 add vec x y val = do
     oldval <- at vec x y
     set vec x y (oldval + val)
 
-width = 1280
+width = 1000
 height = 720
 cellWidth :: Int
 cellHeight :: Int
-cellWidth = 10
-cellHeight = 10
-cellSpacing = 0.01
+cellWidth = 5
+cellHeight = 5
+cellSpacing = 1.0 / fromIntegral yCells
 
 g = -9.81 -- downwards
-dt = 1.0/60.0
+dt = 1.0/240.0
 fluidDensity = 1000.0 -- water ig
 
 xCells = width `div` cellWidth
@@ -60,6 +60,7 @@ initial = do
 main :: IO ()
 main = do
     model <- initial
+    setObject model (width `div` 6) (height `div` 2)
     getArgsAndInitialize
     initialDisplayMode $= [SingleBuffered, RGBMode]
     initialWindowSize $= Size (fromIntegral width) (fromIntegral height)
@@ -72,26 +73,51 @@ main = do
 
 -- mouse :: IORef Model -> Position -> IO ()
 mouse state (Position x y) = do
-    Model {wall, horiz, vert, pressure, newHoriz, newVert, smoke, newSmoke} <- get state
+    model <- get state
+    setObject model x y
+    -- print (normX, normY)
+
+setObject Model {wall, horiz, vert, pressure, newHoriz, newVert, smoke, newSmoke} x y = do
     let normX = (fromIntegral x) / (fromIntegral xCells) * cellSpacing
     let normY = (fromIntegral y) / (fromIntegral yCells) * cellSpacing
     let vx = 0.0
     let vy = 0.0
-    forM_ [1..xCells - 3] $ \i ->
-        forM_ [1..yCells - 3] $ \j -> do
-            let dx = ((fromIntegral i) + 0.5) * (fromIntegral cellWidth) - fromIntegral x
-            let dy = ((fromIntegral j) + 0.5) * (fromIntegral cellWidth) - fromIntegral (height - fromIntegral y)
-            let r = (fromIntegral cellWidth) * 10
-            if dx * dx + dy * dy < r * r then do
-                set horiz i j vx
-                set horiz (i + 1) j vx
-                set vert i j vy
-                set vert i (j + 1) vy
-                set wall i j 0.0
+    -- let aerofoil = [[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], [1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0], [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0], [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0], [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0], [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0], [1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0], [1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0], [1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0], [1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0], [1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0], [1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0], [1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0], [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0], [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0], [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0]]
+    let aerofoil = [[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0], [1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0], [1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0], [1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0], [1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0], [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0], [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0], [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0], [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0], [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0], [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 1.0], [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 1.0], [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 1.0]]
+    forM_ [0..(length aerofoil) - 1] $ \j ->
+        forM [0..(length (aerofoil !! j)) - 1]  $ \i -> do
+            let cx = j + 10
+            let cy = (-i) + (yCells `div` 2) - 4
+            if (aerofoil !! j) !! i == 0.0 then do
+                set horiz cx cy 0
+                set horiz (cx + 1) cy 0
+                set vert cx cy 0
+                set vert cx (cy + 1) 0
+                set newHoriz cx cy 0
+                set newHoriz (cx + 1) cy 0
+                set newVert cx cy 0
+                set newVert cx (cy + 1) 0
+                set wall cx cy 0.0
             else
-                set wall i j 1.0
-
-    -- print (normX, normY)
+                set wall cx cy 1.0
+            
+    -- forM_ [1..xCells - 3] $ \i ->
+    --     forM_ [1..yCells - 3] $ \j -> do
+    --         let dx = ((fromIntegral i) + 0.5) * (fromIntegral cellWidth) - fromIntegral x
+    --         let dy = ((fromIntegral j) + 0.5) * (fromIntegral cellWidth) - fromIntegral (height - fromIntegral y)
+    --         let r = (fromIntegral cellWidth) * fromIntegral (yCells `div` 12)
+    --         if dx * dx + dy * dy < r * r then do
+    --             set horiz i j 0
+    --             set horiz (i + 1) j 0
+    --             set vert i j 0
+    --             set vert i (j + 1) 0
+    --             set newHoriz i j 0
+    --             set newHoriz (i + 1) j 0
+    --             set newVert i j 0
+    --             set newVert i (j + 1) 0
+    --             set wall i j 0.0
+    --         else
+    --             set wall i j 1.0
 
 draw :: IORef Model -> DisplayCallback
 draw state = do 
@@ -111,22 +137,29 @@ map_lol a mi ma mi_ ma_ = (a - mi) / (ma - mi) * (ma_ - mi_) + mi_
 drawModel :: Model -> IO ()
 drawModel model = renderPrimitive Quads $ do
             update model
-            pressures <- getElems (smoke model)
+            pressures <- getElems (pressure model)
             let minPressure = minimum pressures
             let maxPressure = maximum pressures
-            print (minPressure, maxPressure)
             forM_ [0..(xCells*yCells)-1] $ \i -> do
                 let x = i `mod` xCells
                 let y = i `div` xCells
                 pressure <- at (pressure model) x y
+                smoke <- at (smoke model) x y
                 wall <- at (wall model) x y
                 let p = map_lol pressure minPressure maxPressure 0.0 1.0
-                color $ Color3 p p (1.0 - wall)
-                v <- readArray (vert model) i
-                -- print v
+                -- let p = pressure
+                u <- readArray (horiz model) i
+                let a = if u < 0 then (-u) else 0
+                let b = if u > 0 then u else 0
+                a <- (readArray (horiz model) i)
+                b <- (readArray (vert model) i)
+                let c = (a + b) / 2
+                if wall == 0.0 then
+                    color $ Color3 0.0 0.0 (0.0 :: Float)
+                else
+                    color $ (uncurry3 Color3) (getSciColour pressure minPressure maxPressure) -- (a / 3 + 0.5) (b / 3 + 0.5) (c / 3 + 0.5)--((c/3) + 0.5)-- (1.0 - wall)
                 let screenX = (fromIntegral x / fromIntegral xCells * 2 - 1) :: GLfloat
                 let screenY = (fromIntegral y / fromIntegral yCells * 2 - 1) :: GLfloat
-                -- print screenX
                 let dx = (fromIntegral cellWidth) / (fromIntegral width) * 2.0
                 let dy = (fromIntegral cellHeight) / (fromIntegral height) * 2.0
                 vertex $ Vertex2 screenX screenY
@@ -134,11 +167,31 @@ drawModel model = renderPrimitive Quads $ do
                 vertex $ Vertex2 (screenX + dx) (screenY + dy)
                 vertex $ Vertex2 screenX (screenY + dy)
 
+
+getSciColour :: Float -> Float -> Float -> (Float, Float, Float)
+getSciColour val minVal maxVal =
+        if num == 0 then
+            (0.0, s, 1.0)
+        else if num == 1 then
+            (0.0, 1.0, 1.0 - s)
+        else if num == 2 then
+            (s, 1.0, 0.0)
+        else (1.0, 1.0 - s, 0.0)
+    where 
+        d = maxVal - minVal
+        normVal = if d == 0.0 then 0.5 else (val - minVal) / d
+        num = fromIntegral $ floor (normVal * 4)
+        s = (normVal - num / 4) * 4
+        
+
 update :: Model -> IO Model
 update model = do
         forM_ [0..yCells - 1] $ \y -> do
             set (horiz model) 1 y 2.0
-        set (smoke model) 1 ((yCells `div` 2)) 0.0
+
+        let pipeWidth = 5
+        forM_ [(yCells `div` 2 - pipeWidth)..(yCells `div` 2 + pipeWidth)] $ \y -> do
+            set (smoke model) 1 y 0.0
         -- integrate model
         forM_ [0..xCells * yCells - 1] $ \i -> do
             writeArray (pressure model) i 0
@@ -173,7 +226,7 @@ integrate Model {wall, horiz, vert, pressure, newHoriz, newVert, smoke, newSmoke
 
 divergence :: Model -> IO ()
 divergence Model {wall, horiz, vert, pressure, newHoriz, newVert, smoke, newSmoke} = 
-    replicateM_ 50 $
+    replicateM_ 100 $
     forM_ [1..xCells-2] $ \x -> do
         forM_ [1..yCells-2] $ \y -> do
             x0 <- at wall (x - 1) y
@@ -211,6 +264,11 @@ clamp a lower upper = if a > upper then upper else (if a < lower then lower else
 advection :: Model -> IO ()
 advection Model {wall, horiz, vert, pressure, newHoriz, newVert, smoke, newSmoke} = do
     
+    forM_ [0..xCells * yCells - 1] $ \i -> do
+        u <- readArray horiz i
+        v <- readArray vert i
+        writeArray newHoriz i u
+        writeArray newVert i v
     forM_ [1..xCells-1] $ \x -> do
         forM_ [1..yCells-1] $ \y -> do
             sxy  <- at wall x y
@@ -259,19 +317,22 @@ advection Model {wall, horiz, vert, pressure, newHoriz, newVert, smoke, newSmoke
             let u = (u0 + u1 + u2 + u3) / 4
             return (u, v)
 
-sample :: IOArray Int Float -> Float -> Float -> Float -> Float -> IO Float
+sample :: IOUArray Int Float -> Float -> Float -> Float -> Float -> IO Float
 sample field dx dy ix iy = do
     -- make sure the x and y values arent whack
     let x = clamp ix cellSpacing ((fromIntegral xCells - 1) * cellSpacing)
     let y = clamp iy cellSpacing ((fromIntegral yCells - 1) * cellSpacing)
     
     -- which cell is the given coordinate inside?
-    let gridX = floor ((x - dx) / cellSpacing)
-    let gridY = floor ((y - dy) / cellSpacing)
-
+    let gridX0 = minimum [floor ((x - dx) / cellSpacing), xCells - 1]
+    let gridY0 = minimum [floor ((y - dy) / cellSpacing), yCells - 1]
+    let gridX1 = gridX0 + 1
+    let gridY1 = gridY0 + 1
     -- Offsets of the position into the current cell
-    let offsetX = (x - dx) / cellSpacing - (fromIntegral gridX)
-    let offsetY = (y - dy) / cellSpacing - (fromIntegral gridY)
+    -- let offsetX = (x - dx) / cellSpacing - (fromIntegral gridX)
+    -- let offsetY = (y - dy) / cellSpacing - (fromIntegral gridY)
+    let offsetX = ((x - dx) - (fromIntegral gridX0) * cellSpacing) / cellSpacing
+    let offsetY = ((y - dy) - (fromIntegral gridY0) * cellSpacing) / cellSpacing
 
     -- Weights of each velocity component
     let w00 = 1 - offsetX
@@ -280,10 +341,10 @@ sample field dx dy ix iy = do
     let w11 = offsetY
 
     -- sample each velocity component
-    vx0y0 <- at field gridX gridY
-    vx1y0 <- at field (gridX + 1) gridY
-    vx0y1 <- at field gridX (gridY + 1)
-    vx1y1 <- at field (gridX + 1) (gridY + 1)
+    vx0y0 <- at field gridX0 gridY0
+    vx1y0 <- at field gridX1 gridY0
+    vx0y1 <- at field gridX0 gridY1
+    vx1y1 <- at field gridX1 gridY1
     -- final weighted sum
     return ( 
         w00 * w10 * vx0y0 +
@@ -291,11 +352,41 @@ sample field dx dy ix iy = do
         w00 * w11 * vx0y1 +
         w01 * w11 * vx1y1)
 
+
+-- sample :: IOUArray Int Float -> Float -> Float -> Float -> Float -> IO Float
+-- sample field dx dy ix iy = do
+--     let x = max (min ix ((fromIntegral xCells) * cellSpacing)) cellSpacing
+--     let y = max (min iy ((fromIntegral yCells) * cellSpacing)) cellSpacing
+
+--     let x0 = fromIntegral (min (floor ((x - dx) / cellSpacing)) (xCells - 1))
+--     let tx = ((x - dx) - x0 * cellSpacing) / cellSpacing
+--     let x1 = min (x0 + 1) (fromIntegral xCells - 1)
+--     let y0 = fromIntegral (min (floor ((y - dy) / cellSpacing)) (yCells - 1))
+--     let ty = ((y - dy) - y0 * cellSpacing) / cellSpacing
+--     let y1 = min (y0 + 1) (fromIntegral yCells - 1)
+
+--     let sx = 1.0 - tx
+--     let sy = 1.0 - ty
+
+--     fx0y0 <- at field (truncate x0) (truncate y0)
+--     fx1y0 <- at field (truncate x1) (truncate y0)
+--     fx1y1 <- at field (truncate x1) (truncate y1)
+--     fx0y1 <- at field (truncate x0) (truncate y1)
+
+--     return (
+--         sx*sy * fx0y0 +
+--         tx*sy * fx1y0 +
+--         tx*ty * fx1y1 +
+--         sx*ty * fx0y1)
+
 smokeAdvection :: Model -> IO ()
 smokeAdvection Model {wall, horiz, vert, pressure, newHoriz, newVert, smoke, newSmoke} = do
-    forM_ [1..xCells-1] $ \x -> do
-        forM_ [1..yCells-1] $ \y -> do
-            sxy  <- at wall x y
+    forM_ [0..xCells * yCells - 1] $ \i -> do
+        s <- readArray smoke i
+        writeArray newSmoke i s
+    forM_ [1..xCells-2] $ \x -> do
+        forM_ [1..yCells-2] $ \y -> do
+            sxy <- at wall x y
             if sxy /= 0.0 then do
                 u0 <- at horiz x y
                 u1 <- at horiz (x+1) y
@@ -313,3 +404,26 @@ smokeAdvection Model {wall, horiz, vert, pressure, newHoriz, newVert, smoke, new
         s <- readArray newSmoke i
         writeArray smoke i s
     
+-- smokeAdvection :: Model -> IO ()
+-- smokeAdvection Model {wall, horiz, vert, pressure, newHoriz, newVert, smoke, newSmoke} = do
+--     forM_ [1..xCells-2] $ \x -> do
+--         forM_ [1..yCells-2] $ \y -> do
+--             sxy <- at wall x y
+--             if sxy /= 0.0 then do
+--                 u0 <- at horiz x y
+--                 u1 <- at horiz (x+1) y
+--                 v0 <- at vert x y
+--                 v1 <- at vert x (y+1)
+--                 let u = (u0 + u1) * 0.5
+--                 let v = (v0 + v1) * 0.5
+--                 let i = (fromIntegral x) * cellSpacing + (cellSpacing / 2) - dt * u
+--                 let j = (fromIntegral y) * cellSpacing + (cellSpacing / 2) - dt * v
+
+--                 s <- sample smoke (cellSpacing / 2) (cellSpacing / 2) i j
+                
+--                 set newSmoke x y s
+--             else return ()
+
+--     forM_ [0..xCells * yCells - 1] $ \i -> do
+--         s <- readArray newSmoke i
+--         writeArray smoke i s
