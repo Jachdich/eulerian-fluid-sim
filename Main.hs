@@ -26,16 +26,16 @@ add vec x y val = do
     set vec x y (oldval + val)
 
 width = 1000
-height = 720
+height = 360
 cellWidth :: Int
 cellHeight :: Int
 cellWidth = 2
 cellHeight = 2
 cellSpacing = 1.0 / fromIntegral yCells
-numIters = 40
-drawingMode = Velocity
+numIters = 80
+drawingMode = SmokePressure
 
-data DrawingMode = Smoke | Pressure | Velocity
+data DrawingMode = Smoke | Pressure | Velocity | SmokePressure
     deriving (Eq)
 
 g = -9.81
@@ -65,7 +65,7 @@ initial = do
 main :: IO ()
 main = do
     model <- initial
-    setObject model (width `div` 6) (height `div` 2)
+    setObject model (width `div` 6) ((height `div` 2) - 1)
     getArgsAndInitialize
     initialDisplayMode $= [SingleBuffered, RGBMode]
     initialWindowSize $= Size (fromIntegral width) (fromIntegral height)
@@ -88,7 +88,7 @@ setObject Model {wall=wall, horiz=horiz, vert=vert, newHoriz=newHoriz, newVert=n
     let vx = 0.0
     let vy = 0.0
 
-    let r = fromIntegral cellWidth * fromIntegral (yCells `div` 12)
+    let r = fromIntegral cellWidth * fromIntegral (30)
     forM_ [1..xCells - 3] $ \i ->
         forM_ [1..yCells - 3] $ \j -> do
             let dx = (fromIntegral i + 0.5) * fromIntegral cellWidth - fromIntegral x
@@ -132,7 +132,7 @@ drawModel model = renderPrimitive Quads $ do
                 let y = i `div` xCells
                 pressure <- at (pressure model) x y
                 smoke <- at (smoke model) x y
-                let smokeNorm = 1 - (1 - smoke) * 2  
+                let smokeNorm = 1 - (1 - smoke) * 1.6  
                 wall <- at (wall model) x y
                 u <- readArray (horiz model) i
                 let a = if u < 0 then (-u) else 0
@@ -147,8 +147,15 @@ drawModel model = renderPrimitive Quads $ do
                         color $ uncurry3 Color3 (getSciColour pressure minPressure (maxPressure + 0.01))
                     else if drawingMode == Velocity then
                         color $ Color3 (a / 3 + 0.5) (b / 3 + 0.5) (c / 3 + 0.5)
-                    else
+                    else if drawingMode == Smoke then
                         color $ Color3 smokeNorm smokeNorm smokeNorm
+                    else
+                        let (r, g, b) = getSciColour pressure minPressure (maxPressure + 0.01)
+                        in
+                            color $ Color3
+                                (max 0.0 (r - smokeNorm))
+                                (max 0.0 (g - smokeNorm))
+                                (max 0.0 (b - smokeNorm))
                 let screenX = (fromIntegral x / fromIntegral xCells * 2 - 1) :: GLfloat
                 let screenY = (fromIntegral y / fromIntegral yCells * 2 - 1) :: GLfloat
                 let dx = fromIntegral cellWidth / fromIntegral width * 2.0
@@ -178,7 +185,7 @@ update model = do
         forM_ [0..yCells - 1] $ \y -> do
             set (horiz model) 1 y 2.0
 
-        let pipeWidth = 9
+        let pipeWidth = 7
         forM_ [(yCells `div` 2 - pipeWidth)..(yCells `div` 2 + pipeWidth)] $ \y -> do
             set (smoke model) 1 y 0.0
         -- integrate model -- if you want gravity
