@@ -3,7 +3,6 @@ import Data.IORef
 import qualified Graphics.Rendering.OpenGL as GL
 import Graphics.UI.GLUT
 import Codec.Picture
--- import Data.Color
 import Control.Monad (forM_, forM, replicateM_, when)
 import GHC.Utils.Misc (uncurry3)
 
@@ -14,7 +13,8 @@ data Model = Model {wall :: IOUArray Int Float,
                     newHoriz :: IOUArray Int Float,
                     newVert :: IOUArray Int Float,
                     smoke :: IOUArray Int Float,
-                    newSmoke :: IOUArray Int Float}
+                    newSmoke :: IOUArray Int Float,
+                    lastPos :: IORef (Float, Float)}
 
 at :: IOUArray Int Float -> Int -> Int -> IO Float
 at vec x y = readArray vec (y * xCells + x)
@@ -25,21 +25,21 @@ add vec x y val = do
     oldval <- at vec x y
     set vec x y (oldval + val)
 
-width = 1000
-height = 360
+width = 1284
+height = 720
 cellWidth :: Int
 cellHeight :: Int
-cellWidth = 2
-cellHeight = 2
+cellWidth = 6
+cellHeight = 6
 cellSpacing = 1.0 / fromIntegral yCells
-numIters = 80
-drawingMode = SmokePressure
+numIters = 60
+drawingMode = Smoke
 
 data DrawingMode = Smoke | Pressure | Velocity | SmokePressure
     deriving (Eq)
 
 g = -9.81
-dt = 1.0/240.0
+dt = 1.0/120.0
 fluidDensity = 1000.0
 
 xCells = width `div` cellWidth
@@ -55,17 +55,18 @@ initial = do
         pressure <- newArray (0,xCells * yCells) 0.0
         smoke <- newArray (0,xCells * yCells) 1.0
         newSmoke <- newArray (0,xCells * yCells) 1.0
+        lastPos <- newIORef (0, 0)
         forM_ [0..xCells-1] $ \x -> do
             forM_ [0..yCells-1] $ \y -> do
                 set wall x y (isWall x y)
-        return (Model wall horiz vert pressure newHoriz newVert smoke newSmoke)
+        return (Model wall horiz vert pressure newHoriz newVert smoke newSmoke lastPos)
     where
         isWall x y = if x == 0 || y == 0 || y == yCells - 1 then 0.0 else 1.0
 
 main :: IO ()
 main = do
     model <- initial
-    setObject model (width `div` 6) ((height `div` 2) - 1)
+    setObject model (width `div` 2) ((height `div` 2) - 1)
     getArgsAndInitialize
     initialDisplayMode $= [SingleBuffered, RGBMode]
     initialWindowSize $= Size (fromIntegral width) (fromIntegral height)
@@ -82,27 +83,34 @@ mouse state (Position x y) = do
     setObject model (fromIntegral x) (fromIntegral y)
 
 setObject :: Model -> Int -> Int -> IO ()
-setObject Model {wall=wall, horiz=horiz, vert=vert, newHoriz=newHoriz, newVert=newVert} x y = do
+setObject Model {wall=wall, horiz=horiz, vert=vert, newHoriz=newHoriz, newVert=newVert, smoke=smoke, newSmoke=newSmoke, lastPos=lastPos} x y = do
     let normX = fromIntegral x / fromIntegral xCells * cellSpacing
     let normY = fromIntegral y / fromIntegral yCells * cellSpacing
-    let vx = 0.0
-    let vy = 0.0
+    (lx, ly) <- get lastPos
+    let vxInit = (normX - lx) / dt
+    let vyInit = (normY - ly) / dt
 
-    let r = fromIntegral cellWidth * fromIntegral (30)
+    let (vx, vy) = if vxInit > 5 || vyInit > 5 then (0, 0) else (vxInit, vyInit)
+
+    writeIORef lastPos (normX, normY)
+
+    let r = fromIntegral cellWidth * fromIntegral 20
     forM_ [1..xCells - 3] $ \i ->
         forM_ [1..yCells - 3] $ \j -> do
             let dx = (fromIntegral i + 0.5) * fromIntegral cellWidth - fromIntegral x
             let dy = (fromIntegral j + 0.5) * fromIntegral cellWidth - fromIntegral (height - fromIntegral y)
             if dx * dx + dy * dy < r * r then do
-                set horiz i j 0
-                set horiz (i + 1) j 0
-                set vert i j 0
-                set vert i (j + 1) 0
-                set newHoriz i j 0
-                set newHoriz (i + 1) j 0
-                set newVert i j 0
-                set newVert i (j + 1) 0
+                set horiz i j vx
+                set horiz (i + 1) j vx
+                set vert i j vy
+                set vert i (j + 1) vy
+                set newHoriz i j vx
+                set newHoriz (i + 1) j vx
+                set newVert i j vy
+                set newVert i (j + 1) vy
                 set wall i j 0.0
+                set smoke i j 1.0
+                set newSmoke i j 1.0
             else
                 set wall i j 1.0
 

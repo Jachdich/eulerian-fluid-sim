@@ -5,10 +5,8 @@ version:            0.1.0.0
 author:             Jachdich
 maintainer:         jamesedkitching@gmail.com
 
-executable progcomp
+executable fluidsim
     main-is:          Main.hs
-
-    other-extensions: NamedFieldPuns
 
     build-depends:
         base ^>=4.16.4.0,
