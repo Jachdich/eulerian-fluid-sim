@@ -1,6 +1,6 @@
 # Semi-Eulerian Fluid Simulation
 
-This program is my attempt at a fluid simulation based on the works of Matthias Müller, as explained in [this video](https://www.youtube.com/watch?v=iKAVRgIrUOU) and [this PDF](https://matthias-research.github.io/pages/tenMinutePhysics/17-fluidSim.pdf). It visualises a circle in a wind tunnel where the wind flows from left to right. Shapes other than a circle can be defined, but tend not to work as well due to the grid based simulation. Such a fluid simulation is rather imperative by nature so implementing it in a functional language was a challenge. [[monads.jpg]]
+This program is my attempt at a fluid simulation based on the works of Matthias Müller, as explained in [this video](https://www.youtube.com/watch?v=iKAVRgIrUOU) and [this PDF](https://matthias-research.github.io/pages/tenMinutePhysics/17-fluidSim.pdf). It visualises a circle in a wind tunnel where the wind flows from left to right. Shapes other than a circle can be defined, but tend not to work as well due to the grid based simulation. Such a fluid simulation is rather imperative by nature so implementing it in a functional language was a challenge. ![meme about monads](monads.jpg)
 
 ## Usage
 
@@ -30,16 +30,10 @@ There are four ways of visualising the simulation:
 
 ## Examples
 
-[[coloured_smoke.mp4]]
+![Pressure field - smoke field](coloured_smoke.mp4)
 
-[[smoke.mp4]]
+![Smoke](smoke.mp4)
 
-[[velocities.mp4]]
+![Strange velocity visualisation](velocities.mp4)
 
-[[pressure.webm]]
-
-[[aerofoil_cfd.png]]
-
-## Participants
-
-James Kitching, S2419438
+![Pressure field](pressure.webm)
